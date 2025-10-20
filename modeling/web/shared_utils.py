@@ -166,6 +166,9 @@ def get_category_grant_links(categories_df, keywords_df):
     result = result.dropna(subset=['grants'])
     result = result.rename(columns={'grants': 'grant_id'})
     
+    # CRITICAL: Remove duplicates - a grant can appear in multiple keywords within same category
+    result = result.drop_duplicates(subset=['category', 'grant_id'])
+    
     return result[['category', 'grant_id']].reset_index(drop=True)
 
 
@@ -189,6 +192,9 @@ def get_keyword_grant_links(keywords_df):
     result = kw_data.explode('grants')
     result = result.dropna(subset=['grants'])
     result = result.rename(columns={'grants': 'grant_id'})
+    
+    # CRITICAL: Remove duplicates - though rare, a grant might appear multiple times in same keyword
+    result = result.drop_duplicates(subset=['keyword', 'grant_id'])
     
     return result[['keyword', 'grant_id']].reset_index(drop=True)
 
