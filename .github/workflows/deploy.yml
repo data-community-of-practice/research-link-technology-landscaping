@@ -24,9 +24,16 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key.pem ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
           cd ${{ secrets.PROJECT_PATH }}
+
+          echo "Pulling latest code ..."
           sudo git pull origin main
+
+          echo "Rebuilding and restarting container ..."
           sudo docker-compose down
           sudo docker-compose up --build -d
+
+          echo "Cleaning up old images ..."
+          sudo docker image prune -f
           EOF
 
       - name: Cleanup SSH key
