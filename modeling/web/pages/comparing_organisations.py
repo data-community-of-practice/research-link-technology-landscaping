@@ -32,6 +32,31 @@ def get_category_grant_links_cached():
     return get_category_grant_links(categories_df, keywords_df)
 
 
+# Cache the entire metrics calculation - this is the main bottleneck
+@st.cache_data
+def calculate_category_metrics_by_year_cached(grants_index, grants_start_years, grants_end_years, 
+                                                grants_funding, grants_org_ids, 
+                                                selected_categories, metric='count'):
+    """Cached wrapper for calculate_category_metrics_by_year
+    
+    Takes serializable inputs (lists/tuples instead of DataFrames) for proper caching.
+    """
+    # Reconstruct grants_df from serializable components
+    grants_df = pd.DataFrame({
+        'start_year': grants_start_years,
+        'end_year': grants_end_years,
+        'funding_amount': grants_funding,
+        'organisation_ids': grants_org_ids
+    }, index=grants_index)
+    
+    _, _, categories_df = load_data()
+    keywords_df, _, _ = load_data()
+    
+    return calculate_category_metrics_by_year(
+        grants_df, categories_df, keywords_df, selected_categories, metric
+    )
+
+
 def filter_grants_by_organisations(grants_df, organisation_ids):
     """Filter grants for specific organisations"""
     if not organisation_ids or 'organisation_ids' not in grants_df.columns:
@@ -161,6 +186,43 @@ def calculate_cumulative_metrics(data, extend_to_year=None):
             })
     
     return pd.DataFrame(cumulative_data)
+
+
+@st.cache_data
+def calculate_slopes_and_auto_select(org1_ids, org2_ids, metric, min_threshold):
+    """Calculate slopes for all categories and return auto-selected categories
+    
+    This is cached to avoid recalculating on every interaction.
+    """
+    keywords_df, grants_df, categories_df = load_data()
+    
+    # Filter grants for both groups
+    org1_grants = filter_grants_by_organisations(grants_df, org1_ids)
+    org2_grants = filter_grants_by_organisations(grants_df, org2_ids)
+    
+    if org1_grants.empty or org2_grants.empty:
+        return []
+    
+    # Calculate metrics for ALL categories
+    org1_data_all = calculate_category_metrics_by_year(
+        org1_grants, categories_df, keywords_df, None, metric
+    )
+    org1_data_all['org_group'] = 'org1'
+    
+    org2_data_all = calculate_category_metrics_by_year(
+        org2_grants, categories_df, keywords_df, None, metric
+    )
+    org2_data_all['org_group'] = 'org2'
+    
+    # Combine and calculate cumulative metrics
+    combined_data_all = pd.concat([org1_data_all, org2_data_all], ignore_index=True)
+    combined_data_all = calculate_cumulative_metrics(combined_data_all)
+    
+    # Calculate slopes and get auto-selected categories
+    slopes = calculate_category_slopes(combined_data_all)
+    auto_categories = get_top_and_bottom_slope_categories(slopes, n=3, min_threshold=min_threshold)
+    
+    return auto_categories
 
 
 def calculate_category_slopes(data):
@@ -455,6 +517,9 @@ def create_connected_scatterplot(data, org1_label, org2_label, category_label, m
 
 def render_sidebar(grants_df, categories_df, auto_selected_categories=None):
     """Render sidebar controls"""
+    # If caller didn't pass auto_selected_categories, check session state
+    if auto_selected_categories is None:
+        auto_selected_categories = st.session_state.get('auto_categories')
     st.sidebar.header("Organisation Groups")
     
     if 'organisation_ids' not in grants_df.columns:
@@ -592,17 +657,46 @@ def main():
             st.error("Unable to load grants data.")
             return
 
-        # Initialize session state for auto-selected categories
-        if 'auto_categories' not in st.session_state:
-            st.session_state.auto_categories = None
+    # First render to get org groups and basic config
+    # We need to render sidebar BEFORE calculating slopes to get the org groups
+    initial_config = render_sidebar(grants_df, categories_df, auto_selected_categories=None)
+    if initial_config is None:
+        return
+    
+    # Calculate auto-selected categories only if not already in session state
+    # This prevents recalculation on every rerun
+    cache_key = f"{tuple(sorted(initial_config['org_group1']))}_{tuple(sorted(initial_config['org_group2']))}_{initial_config['metric']}_{initial_config['min_threshold']}"
+    
+    if 'auto_categories_cache' not in st.session_state:
+        st.session_state.auto_categories_cache = {}
+    
+    if cache_key not in st.session_state.auto_categories_cache:
+        with st.spinner("Calculating category slopes for auto-selection..."):
+            auto_categories = calculate_slopes_and_auto_select(
+                initial_config['org_group1'],
+                initial_config['org_group2'],
+                initial_config['metric'],
+                initial_config['min_threshold']
+            )
+            st.session_state.auto_categories_cache[cache_key] = auto_categories
+    else:
+        auto_categories = st.session_state.auto_categories_cache[cache_key]
+    
+    # If the auto-selected categories differ from the current default selection,
+    # store them in session state and rerun once so the sidebar is recreated with
+    # the new defaults. This avoids rendering the sidebar twice in the same run
+    # which would create duplicate widget keys.
+    current_selection = initial_config['selected_categories']
+    if len(current_selection) == 1 and auto_categories and current_selection != auto_categories:
+        st.session_state['auto_categories'] = auto_categories
+        # Rerun so the sidebar is built once with the auto-selected defaults
+        st.rerun()
 
-        # First render to get org groups
-        config = render_sidebar(grants_df, categories_df, st.session_state.auto_categories)
-        if config is None:
-            return
+    # Use the initial config (sidebar already reflects session_state on this run)
+    config = initial_config
 
     with st.spinner("Preparing comparison data..."):
-        # Step 1: Filter grants
+        # Filter grants
         org1_grants = filter_grants_by_organisations(grants_df, config['org_group1'])
         org2_grants = filter_grants_by_organisations(grants_df, config['org_group2'])
 
@@ -610,45 +704,35 @@ def main():
             st.warning("No grants found for selected organisations.")
             return
 
-        # Step 2: Calculate metrics for ALL categories to find slopes
-        org1_data_all = calculate_category_metrics_by_year(
-            org1_grants,
-            categories_df,
-            keywords_df,
-            None,  # Get all categories
+        # Only calculate metrics for SELECTED categories (not all)
+        # This is the key optimization - we don't need all categories for the final display
+        org1_data = calculate_category_metrics_by_year_cached(
+            tuple(org1_grants.index),
+            tuple(org1_grants['start_year'].tolist()),
+            tuple(org1_grants['end_year'].tolist()),
+            tuple(org1_grants['funding_amount'].tolist()),
+            tuple(org1_grants['organisation_ids'].tolist()),
+            tuple(config['selected_categories']),  # Only selected categories
             config['metric']
         )
-        org1_data_all['org_group'] = 'org1'
+        org1_data['org_group'] = 'org1'
 
-        org2_data_all = calculate_category_metrics_by_year(
-            org2_grants,
-            categories_df,
-            keywords_df,
-            None,  # Get all categories
+        org2_data = calculate_category_metrics_by_year_cached(
+            tuple(org2_grants.index),
+            tuple(org2_grants['start_year'].tolist()),
+            tuple(org2_grants['end_year'].tolist()),
+            tuple(org2_grants['funding_amount'].tolist()),
+            tuple(org2_grants['organisation_ids'].tolist()),
+            tuple(config['selected_categories']),  # Only selected categories
             config['metric']
         )
-        org2_data_all['org_group'] = 'org2'
+        org2_data['org_group'] = 'org2'
 
-        # Step 3: Combine and calculate cumulative metrics
-        combined_data_all = pd.concat([org1_data_all, org2_data_all], ignore_index=True)
-        combined_data_all = calculate_cumulative_metrics(combined_data_all)
+        # Combine and calculate cumulative metrics
+        combined_data = pd.concat([org1_data, org2_data], ignore_index=True)
+        combined_data = calculate_cumulative_metrics(combined_data)
 
-        # Step 4: Calculate slopes for auto-selection
-        slopes = calculate_category_slopes(combined_data_all)
-        auto_categories = get_top_and_bottom_slope_categories(
-            slopes,
-            n=3,
-            min_threshold=config['min_threshold']
-        )
-
-        # Update session state if categories changed
-        if st.session_state.auto_categories != auto_categories:
-            st.session_state.auto_categories = auto_categories
-            st.rerun()
-
-        # Filter to selected categories
-        combined_data = combined_data_all[combined_data_all['category'].isin(config['selected_categories'])].copy()
-
+        # Filter by year range
         combined_data = combined_data[
             (combined_data['year'] >= config['year_min']) &
             (combined_data['year'] <= config['year_max'])
