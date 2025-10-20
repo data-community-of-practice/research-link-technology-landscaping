@@ -50,6 +50,42 @@ def hash_df(df: pd.DataFrame) -> int:
     elif "name" in df.columns:
         return pd.util.hash_pandas_object(df.name).sum()
 
+def hash_df_content(df: pd.DataFrame) -> int:
+    """Generate a comprehensive hash for a DataFrame including all content.
+    
+    This hashes the entire DataFrame content including:
+    - All rows and columns
+    - Index values
+    - Shape (to distinguish filtered vs unfiltered data)
+    
+    This is more expensive than hash_df but ensures filtered DataFrames
+    get different cache keys than their unfiltered versions.
+    """
+    if df is None or df.empty:
+        return hash(None)
+    
+    # Combine multiple aspects for robust hashing
+    shape_hash = hash(df.shape)
+    
+    # Hash index
+    index_hash = pd.util.hash_pandas_object(df.index).sum()
+    
+    # Hash all columns - handle different types
+    column_hashes = []
+    for col in df.columns:
+        try:
+            col_hash = pd.util.hash_pandas_object(df[col], index=False).sum()
+            column_hashes.append(col_hash)
+        except TypeError:
+            # Handle unhashable types (like lists) by converting to string
+            col_hash = pd.util.hash_pandas_object(df[col].astype(str), index=False).sum()
+            column_hashes.append(col_hash)
+    
+    content_hash = hash(tuple(column_hashes))
+    
+    # Combine all hashes
+    return hash((shape_hash, index_hash, content_hash))
+
 # Load data with caching
 @st.cache_data(hash_funcs={pd.core.frame.DataFrame: hash_df})
 def load_data():
@@ -124,14 +160,13 @@ def get_unique_research_fields():
 
 
 # Vectorized data processing functions
+@st.cache_data(hash_funcs={pd.DataFrame: hash_df_content})
 def get_category_grant_links(categories_df, keywords_df):
     """Extract category-grant relationships using vectorized pandas operations
     
     Returns DataFrame with columns: category, grant_id
     
-    NOTE: This function is NOT cached because it's often called with filtered
-    subsets of categories, and Streamlit's caching doesn't reliably differentiate
-    between different filtered versions of the same base DataFrame.
+    Uses comprehensive content hashing to differentiate filtered DataFrames.
     """
     if categories_df is None or keywords_df is None:
         return pd.DataFrame()
@@ -172,12 +207,13 @@ def get_category_grant_links(categories_df, keywords_df):
     return result[['category', 'grant_id']].reset_index(drop=True)
 
 
+@st.cache_data(hash_funcs={pd.DataFrame: hash_df_content})
 def get_keyword_grant_links(keywords_df):
     """Extract keyword-grant relationships using vectorized pandas operations
     
     Returns DataFrame with columns: keyword, grant_id
     
-    NOTE: This function is NOT cached for the same reason as get_category_grant_links.
+    Uses comprehensive content hashing to differentiate filtered DataFrames.
     """
     if keywords_df is None or keywords_df.empty:
         return pd.DataFrame()
@@ -199,6 +235,7 @@ def get_keyword_grant_links(keywords_df):
     return result[['keyword', 'grant_id']].reset_index(drop=True)
 
 
+@st.cache_data(hash_funcs={pd.DataFrame: hash_df_content})
 def expand_grants_to_years(grants_df, use_active_period=True, include_org_ids=False):
     """Expand grants to one row per year (and optionally per organisation) using vectorized operations
     
@@ -210,7 +247,7 @@ def expand_grants_to_years(grants_df, use_active_period=True, include_org_ids=Fa
     Returns:
         DataFrame with columns: grant_id, year, funding_amount, [organisation_id if include_org_ids=True]
     
-    NOTE: Not cached - operates on potentially filtered DataFrames
+    Uses comprehensive content hashing to differentiate filtered DataFrames.
     """
     if grants_df.empty:
         return pd.DataFrame()
@@ -261,6 +298,7 @@ def expand_grants_to_years(grants_df, use_active_period=True, include_org_ids=Fa
     return expanded[['grant_id', 'year', 'funding_amount']].reset_index(drop=True)
 
 
+@st.cache_data(hash_funcs={pd.DataFrame: hash_df_content})
 def expand_links_to_years(link_df, grants_df, entity_col, use_active_period=True, include_source=False):
     """Expand entity-grant links to one row per entity per year using vectorized operations
     
@@ -273,6 +311,8 @@ def expand_links_to_years(link_df, grants_df, entity_col, use_active_period=True
         
     Returns:
         DataFrame with columns: entity_col, year, grant_id, funding_amount, [source if include_source=True]
+    
+    Uses comprehensive content hashing to differentiate filtered DataFrames.
     """
     if link_df.empty or grants_df.empty:
         return pd.DataFrame()

@@ -13,8 +13,8 @@ This repository implements an automated research landscape analysis pipeline tha
 - **`extract.py`**: LLM-powered keyword extraction from grant titles/descriptions with structured output (name, type, description). Implements concurrency control and checkpoint recovery for previously processed grants
 - **`categorise.py`**: Groups keywords into thematic categories with descriptions and field-of-research classifications using hierarchical LLM prompts over keyword clusters
 - **`merge.py`**: Consolidates duplicate/similar categories across multiple categorization runs by identifying semantic overlap and merging source categories
-- **`clustering.py`**: UMAP-based dimensionality reduction and ordering to create semantically coherent clusters from embeddings, with configurable batch sizes
-- **`embedding.py`**: Creates semantic embeddings using SentenceTransformers (default model configurable via `DEFAULT_EMBEDDING_MODEL`)
+- **`clustering.py`**: UMAP-based dimensionality reduction and ordering for semantic similarity clustering. Configurable batch sizes for target cluster granularity
+- **`embedding.py`**: Creates semantic embeddings using SentenceTransformers (default model configurable via `DEFAULT_EMBEDDING_MODEL`). Note: TF-IDF embedding generation is now handled in `cli.py`'s `_ensure_embeddings()` function
 - **`llm_client.py`**: Async OpenAI client wrapper for JSON schema-based completions with timeout handling
 - **`concurrency.py`**: Rich progress bar integration for async batch processing with semaphore-based concurrency limiting
 - **`cluster_io.py`**: Helper utilities for loading and writing cluster JSON files
@@ -59,7 +59,7 @@ uv run python cli.py embed keywords.jsonl embeddings.npy [--model MODEL] [--forc
 uv run python cli.py cluster keywords.jsonl embeddings.npy clusters.json [--batch-size N]
 
 # Combined embedding + clustering
-uv run python cli.py embed-cluster keywords.jsonl embeddings.npy clusters.json
+uv run python cli.py embed-cluster keywords.jsonl embeddings.npy clusters.json [--embedding-type transformer|tfidf]
 
 # Categorize keyword clusters into research themes
 uv run python cli.py categorise clusters.json output_dir/ [--concurrency N] [--limit N]

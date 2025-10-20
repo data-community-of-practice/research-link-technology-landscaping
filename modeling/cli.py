@@ -31,23 +31,40 @@ def _ensure_embeddings(
     model: str,
     batch_size: int,
     force: bool,
+    embedding_type: str = "transformer",
+    data = None,
 ) -> Tuple[Path, bool]:
     embeddings_path = output_path
     if embeddings_path.exists() and not force:
         typer.echo(f"Embeddings already exist at {embeddings_path}; use --force to overwrite")
         return embeddings_path, False
 
-    encoder = SentenceTransformer(model)
-    array = encoder.encode(
-        texts,
-        batch_size=batch_size,
-        convert_to_numpy=True,
-        show_progress_bar=True,
-        normalize_embeddings=True,
-    ).astype(np.float32)
+    if embedding_type == "tfidf":
+        # Use TF-IDF for embeddings
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        
+        vectorizer = TfidfVectorizer(
+            token_pattern=r'(?u)\b\w+(?:\s+\w+)*\b',  # Support multi-word keywords
+            lowercase=False,
+            min_df=1
+        )
+        array = vectorizer.fit_transform(texts).toarray().astype(np.float32)
+        typer.echo(f"Generated TF-IDF embeddings: {array.shape[0]} items × {array.shape[1]} features")
+    else:
+        # Use transformer-based embeddings (default)
+        encoder = SentenceTransformer(model)
+        array = encoder.encode(
+            texts,
+            batch_size=batch_size,
+            convert_to_numpy=True,
+            show_progress_bar=True,
+            normalize_embeddings=True,
+        ).astype(np.float32)
+        typer.echo(f"Generated transformer embeddings: {array.shape[0]} items × {array.shape[1]} dimensions")
+    
     embeddings_path.parent.mkdir(parents=True, exist_ok=True)
     np.save(embeddings_path, array)
-    typer.echo(f"Saved {array.shape[0]} embeddings with dimension {array.shape[1]} to {embeddings_path}")
+    typer.echo(f"Saved embeddings to {embeddings_path}")
     return embeddings_path, True
 
 
@@ -101,6 +118,7 @@ def embed(
     embeddings_path: Path = typer.Argument(..., help="Path to write embeddings npy file"),
     model: str = typer.Option(DEFAULT_EMBEDDING_MODEL, help="Local Hugging Face model id"),
     batch_size: int = typer.Option(64, help="Number of texts per embedding batch"),
+    embedding_type: str = typer.Option("transformer", help="Embedding type: 'transformer' or 'tfidf'"),
     force: bool = typer.Option(False, help="Regenerate embeddings even if cache exists"),
 ) -> None:
     data_path, data = _load_dataset(input_path)
@@ -110,7 +128,7 @@ def embed(
         typer.echo("No records to embed")
         return
 
-    _ensure_embeddings(texts, embeddings_path, model, batch_size, force)
+    _ensure_embeddings(texts, embeddings_path, model, batch_size, force, embedding_type, data)
 
 
 @app.command("embed-cluster")
@@ -121,6 +139,7 @@ def embed_and_cluster(
     model: str = typer.Option(DEFAULT_EMBEDDING_MODEL, help="Local Hugging Face model id"),
     batch_size: int = typer.Option(64, help="Number of texts per embedding batch"),
     cluster_batch_size: int = typer.Option(50, help="Target cluster size"),
+    embedding_type: str = typer.Option("transformer", help="Embedding type: 'transformer' or 'tfidf'"),
     force: bool = typer.Option(False, help="Regenerate embeddings even if cache exists"),
 ) -> None:
     data_path, data = _load_dataset(input_path)
@@ -130,7 +149,7 @@ def embed_and_cluster(
         typer.echo("No records to embed")
         return
 
-    embeddings_path, _ = _ensure_embeddings(texts, embeddings_path, model, batch_size, force)
+    embeddings_path, _ = _ensure_embeddings(texts, embeddings_path, model, batch_size, force, embedding_type, data)
 
     result = _cluster_and_save(data_path, embeddings_path, clusters_path, cluster_batch_size)
     typer.echo(

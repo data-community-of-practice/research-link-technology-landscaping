@@ -23,25 +23,29 @@ class ClusterManager:
     def __init__(self, random_state: int = 42):
         self.random_state = random_state
 
-    def cluster(self, embeddings: np.ndarray, data: Any, batch_size: int) -> ClusteringResult:
+    def cluster(
+        self, 
+        embeddings: np.ndarray, 
+        data: Any, 
+        batch_size: int
+    ) -> ClusteringResult:
         n_clusters = self._calculate_clusters(len(data), batch_size)
-        logger.info("Clustering %s items into %s clusters (target batch_size=%s)", len(data), n_clusters, batch_size)
+        logger.info("Clustering %s items into %s clusters (target batch_size=%s)", 
+                   len(data), n_clusters, batch_size)
 
         if len(data) <= batch_size:
             cluster_labels = np.zeros(len(data), dtype=int)
-            neighbors = None
+            metadata = {"method": "umap_ordering", "target_batch_size": batch_size}
         else:
             neighbors = self._umap_neighbors(len(data))
             cluster_labels = self._chunk_with_umap(embeddings, batch_size, neighbors)
+            metadata = {
+                "method": "umap_ordering",
+                "target_batch_size": batch_size,
+                "umap_neighbors": neighbors
+            }
 
         clusters = self._organize_clusters(data, cluster_labels)
-
-        metadata = {
-            "method": "umap_ordering",
-            "target_batch_size": batch_size,
-        }
-        if neighbors is not None:
-            metadata["umap_neighbors"] = neighbors
 
         return ClusteringResult(
             total_items=len(data),
