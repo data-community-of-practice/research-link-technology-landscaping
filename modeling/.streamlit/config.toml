@@ -12,6 +12,3 @@ gatherUsageStats = false
 [theme]
 base = "light"
 primaryColor = "#064475"
-
-[ui]
-hideTopBar = true
