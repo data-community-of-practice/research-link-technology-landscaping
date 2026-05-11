@@ -1,0 +1,13 @@
+- add classify.py file that classify grants back into the categories 
+- add quality control to all steps in pipeline
+  - for keywords, this would mean to evaluate keywords based on the following criteria
+    - presence: the keyword extracted should be present in the source 
+    - relevance (necessary): the keyword should capture some core aspect of the ideas in the source
+    - precision (sufficient): the keyword should uniquely identify the source (or its similar groups). This criteria is important for TL. 
+  - for category, the following criteria should do 
+    - precision: the category should not be overly broad (not cover too much of the source keywords)
+    - orthogonality: the category should not be overlaping
+      - This should be measured through using embedding-based approach
+    - balance scope: the size (represented by either volume of knowledge or source) of the category
+    - uncertainty handling: the uncertain keywords should be identified and properly placed in the unknown container
+- Fix unknown and missing keywords
