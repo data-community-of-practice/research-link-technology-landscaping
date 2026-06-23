@@ -9,6 +9,7 @@ dependencies = [
     "jupyter>=1.1.1",
     "numpy>=1.24.0",
     "openai>=1.99.9",
+    "openai-agents>=0.1.0",
     "openpyxl>=3.1.5",
     "pandas>=2.3.1",
     "plotly-express>=0.4.1",
@@ -24,7 +25,7 @@ dependencies = [
     "jq>=1.10.0",
     "streamlit>=1.49.0",
     "tiktoken>=0.11.0",
-    "transformers>=4.55.4",
+    "transformers[serving]>=4.55.4",
     "scipy>=1.13.1",
     "datamapplot>=0.6.4",
     "typer>=0.12.0",
@@ -34,6 +35,12 @@ dependencies = [
     "tenacity>=8.2.3",
     "sentence-transformers>=3.1.0",
     "rich>=13.7.0",
+    "langchain>=1.0.3",
+    "langchain-openai>=1.0.2",
+    "langchain-community>=0.4.1",
+    "textual-dev>=1.8.0",
+    "memray>=1.19.1",
+    "langgraph>=1.0.2",
 ]
 
 [tool.uv.sources]

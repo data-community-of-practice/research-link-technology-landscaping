@@ -10,9 +10,9 @@ ROOT_DIR = Path(__file__).parent
 RESULTS_DIR = ROOT_DIR / "results"
 FIGURES_DIR = ROOT_DIR / "figures"
 
-OPENAI_BASE_URL = CONFIG.get("OPENAI_BASE_URL", "http://localhost:8000/v1")
-OPENAI_MODEL = CONFIG.get("OPENAI_MODEL", "Qwen/Qwen3-4B-Instruct-2507")
-EMBEDDING_MODEL = CONFIG.get("EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B")
+OPENAI_BASE_URL = CONFIG.get("OPENAI_BASE_URL", None)
+OPENAI_MODEL = CONFIG.get("OPENAI_MODEL", "gpt-5-mini")
+OPENAI_EMBEDDING_MODEL = CONFIG.get("OPENAI_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 OPENAI_TIMEOUT_SECONDS = 600
 CONCURRENCY = 512
 
@@ -23,17 +23,17 @@ def _item_template(record):
 
 @dataclass
 class Keywords:
-    keywords_dir = RESULTS_DIR / "keywords"
-    keywords_dir.mkdir(parents=True, exist_ok=True)
-    extracted_keywords_path: Path = keywords_dir / "extracted_keywords.jsonl"
-    keywords_path: Path = keywords_dir / "keywords.jsonl"
+    # keywords_dir = RESULTS_DIR / "keywords"
+    # keywords_dir.mkdir(parents=True, exist_ok=True)
+    # extracted_keywords_path: Path = keywords_dir / "extracted_keywords.jsonl"
+    keywords_path: Path = RESULTS_DIR / "keywords.jsonl"
     template = staticmethod(_item_template)
     
     def load(as_dataframe=True):
         return utils.load_jsonl_file(Keywords.keywords_path, as_dataframe=as_dataframe)
     
-    def load_extracted(as_dataframe=True):
-        return utils.load_jsonl_file(Keywords.extracted_keywords_path, as_dataframe=as_dataframe)
+    # def load_extracted(as_dataframe=True):
+    #     return utils.load_jsonl_file(Keywords.extracted_keywords_path, as_dataframe=as_dataframe)
     
 
 
@@ -72,7 +72,11 @@ class Grants:
     def preprocess():
         df = utils.load_json_file(Grants.source_path, as_dataframe=True)
         df = df[~df.title.isna()] 
+        df = df[~df.grant_summary.isnull()]
+        df = df[df.grant_summary != "Not Applicable"]
         df = df[~df.title.str.contains("equipment grant", case=False) & ~df.title.str.contains("travel grant", case=False)]
+
+        
         df["funding_amount"] = pd.to_numeric(df["funding_amount"], errors="coerce")
         df["start_year"] = pd.to_datetime(df["start_date"], errors="coerce").dt.year.astype("Int64")
         df["end_year"] = pd.to_datetime(df["end_date"], errors="coerce").dt.year.astype("Int64")

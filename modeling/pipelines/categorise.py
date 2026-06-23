@@ -96,6 +96,7 @@ class CategoryList(BaseModel):
     categories: List[Category] = Field(description="List of research categories")
 
 
+
 class KeywordCategoriser:
     def __init__(self, outputs: CategoryOutputs) -> None:
         self.outputs = outputs
@@ -189,16 +190,7 @@ You are an expert Technology Analyst and Innovation Forecaster, specializing in 
 Your task is to analyze a list of user-provided keywords and generate a comprehensive set of research and technology categories in a specific JSON format. Each category must be linked to an appropriate FOR (Fields of Research) division.
 
 **IMPORTANT: You MUST complete this task immediately and provide the full categorization. Do NOT ask for clarification, approval, or propose alternative approaches. Proceed directly with categorizing all provided keywords.**
-
-**Input Structure:**
-Each keyword is provided as an XML-like snippet using HTML-style tags:
-
-```
-<item><name>KEYWORD_NAME</name><description>KEYWORD_DESCRIPTION</description></item>
-```
-
-`<name>` contains the exact keyword term. `<description>` contains a concise summary of the keyword's relevance, context, or notable attributes. Use these tags to parse the input reliably.
-
+å
 **Core Objective:**
 Your primary goal is to organize the provided keywords into meaningful, emergent categories that bridge the specificity of the keywords with the broadness of the 23 top-level FOR divisions. Your analysis should favor the identification of potential breakthroughs and new interdisciplinary fields.
 

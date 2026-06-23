@@ -1,19 +1,29 @@
-from __future__ import annotations
-
+from dataclasses import dataclass
 import asyncio
-from itertools import chain
-from typing import Iterable, List, Optional, Tuple
-
-import jsonlines
-from tqdm.asyncio import tqdm
-from openai import AsyncOpenAI
-
+from langchain.agents import create_agent
+from langchain_openai.chat_models import ChatOpenAI
 import config
-import utils
-from models import KeywordsList
-from process import postprocess_keywords
+from langchain.agents.middleware import AgentState, after_agent
+import jsonlines
+from langgraph.runtime import Runtime
+from langchain.agents.structured_output import ProviderStrategy
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    BarColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    MofNCompleteColumn,
+    TimeRemainingColumn
+)
 
-from . import llm_client
+from pydantic import BaseModel, Field
+
+from enum import Enum
+from typing import List
+from langchain_core.prompt_values import ChatPromptValue
+from langchain_core.messages import HumanMessage
+
 
 
 SYSTEM_PROMPT = """
@@ -78,89 +88,54 @@ Provide accurate, specific keywords that capture the innovative and emerging asp
 """
 
 
-def load_extract_dataset() -> List[dict]:
-    records = config.Grants.load(as_dataframe=False)
-    return list(records)
+
+class KeywordType(str, Enum):
+    GENERAL = "General"
+    METHODOLOGY = "Methodology"
+    APPLICATION = "Application"
+    TECHNOLOGY = "Technology"
+
+class Keyword(BaseModel):
+    model_config = {"extra": "forbid"}
+    name: str = Field(description="The actual keyword or phrase")
+    type: KeywordType = Field(description="Type of keyword: General, Methodology, Application, or Technology")
+    description: str = Field(description="Short description explaining the context and relevance of this keyword within the research")
+
+class KeywordsList(BaseModel):
+    model_config = {"extra": "forbid"}
+    keywords: List[Keyword] = Field(description="List of all extracted keywords with their types and descriptions")
+    source_grant_id: str = Field(description="The unique identifier of the grant from which this keyword was extracted")
+
+async def run(agent, prompts):
+    writer = jsonlines.open("results/keywords.jsonl", mode="a")
+    total = len(prompts)
 
 
-def finished_grants() -> Iterable[str]:
-    if not config.Keywords.extracted_keywords_path.exists():
-        return []
-    keywords = utils.load_jsonl_file(config.Keywords.extracted_keywords_path, as_dataframe=True)
-    if keywords.empty:
-        return []
-    return keywords.grant_id.unique()
+    progress_columns = [SpinnerColumn(), BarColumn(), TimeElapsedColumn(), TimeRemainingColumn(), MofNCompleteColumn()]
+    # Use transient so the progress bar clears after completion
+    with Progress(*progress_columns, transient=True) as progress:
+        task_id = progress.add_task("Extracting keywords", total=total)
+
+        async for _, response in agent.abatch_as_completed(prompts, config={"max_concurrency": 512}):
+            for k in response["structured_response"].keywords:
+                writer.write({
+                    "source_grant_id": response["messages"][0].id,
+                    "name": k.name,
+                    "type": k.type,
+                    "description": k.description,
+                })
+            progress.advance(task_id, 1)
+
+    writer.close()
+        
 
 
-def _grant_input(record: dict) -> str:
-    return config.Grants.template(record)
+if __name__ == "__main__":
+    
+    grants = config.Grants.load()
+    template = lambda row: f"<title>{row['title']}</title><grant_summary>{row['grant_summary']}</grant_summary>"
+    prompts = [ChatPromptValue(messages=[HumanMessage(content=template(row), id=row['id'])]) for _, row in grants.iterrows()]
+    model = ChatOpenAI(model=config.OPENAI_MODEL, base_url=config.OPENAI_BASE_URL)
+    agent = create_agent(model=model, system_prompt=SYSTEM_PROMPT, response_format=ProviderStrategy(KeywordsList))
+    asyncio.run(run(agent, prompts))
 
-
-async def _request_keywords(client: AsyncOpenAI, grant_text: str) -> KeywordsList:
-    output_text = await llm_client.call_json_schema(
-        client,
-        model=config.OPENAI_MODEL,
-        system_prompt=SYSTEM_PROMPT,
-        user_content=grant_text,
-        schema_name="keywords_extraction",
-        schema=KeywordsList.model_json_schema(),
-    )
-    return KeywordsList.model_validate_json(output_text)
-
-
-async def extract_async(filter_finished: bool = True, concurrency: int = 10) -> List[str]:
-    records = load_extract_dataset()
-    finished_ids = set(finished_grants()) if filter_finished else set()
-
-    candidate_iter = (
-        record for record in records if record.get("id") and record.get("id") not in finished_ids
-    )
-    try:
-        first_target = next(candidate_iter)
-    except StopIteration:
-        return []
-
-    targets = list(chain([first_target], candidate_iter))
-    semaphore = asyncio.Semaphore(max(concurrency, 1))
-    processed: List[Tuple[str, KeywordsList]] = []
-
-    writer = jsonlines.open(config.Keywords.extracted_keywords_path, "a")
-    try:
-        async with llm_client.async_client() as client:
-
-            async def run_single(record: dict) -> Optional[Tuple[str, KeywordsList]]:
-                grant_id = record.get("id")
-                if not grant_id:
-                    return None
-                grant_input = _grant_input(record)
-                async with semaphore:
-                    keywords = await _request_keywords(client, grant_input)
-                return grant_id, keywords
-
-            tasks = [asyncio.create_task(run_single(record)) for record in targets]
-            for task in tqdm(
-                asyncio.as_completed(tasks),
-                total=len(tasks),
-                desc="Extracting keywords",
-                unit="grant",
-            ):
-                result = await task
-                if result:
-                    processed.append(result)
-                    _write_keywords(result[0], result[1], writer)
-    finally:
-        writer.close()
-
-    postprocess_keywords()
-    return [grant_id for grant_id, _ in processed]
-
-
-def _write_keywords(grant_id: str, keywords: KeywordsList, writer: jsonlines.Writer) -> None:
-    for keyword in keywords.keywords:
-        payload = keyword.model_dump()
-        payload["grant_id"] = grant_id
-        writer.write(payload)
-
-
-def extract(filter_finished: bool = True, concurrency: int = 10) -> List[str]:
-    return asyncio.run(extract_async(filter_finished=filter_finished, concurrency=concurrency))
