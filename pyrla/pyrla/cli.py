@@ -81,6 +81,24 @@ def save_json_to_file(data: List[dict], filename: str) -> None:
         raise typer.Exit(1)
 
 
+def save_jsonl_to_file(data: List[dict], filename: str) -> None:
+    """Save data as JSON Lines (one JSON object per line)"""
+    try:
+        with open(filename, 'w', encoding='utf-8') as f:
+            for record in data:
+                f.write(json.dumps(record, ensure_ascii=False, default=str) + '\n')
+        console.print(f"[{DisplayConfig.SUCCESS_COLOR}]✓ JSONL data saved to: {filename}[/{DisplayConfig.SUCCESS_COLOR}]")
+    except Exception as e:
+        console.print(f"[{DisplayConfig.ERROR_COLOR}]Error saving JSONL file: {e}[/{DisplayConfig.ERROR_COLOR}]")
+        raise typer.Exit(1)
+
+
+def output_jsonl_to_stdout(data: List[dict]) -> None:
+    """Output data as JSON Lines to stdout"""
+    for record in data:
+        typer.echo(json.dumps(record, ensure_ascii=False, default=str))
+
+
 def format_datetime_value(value: Optional[object], default: str = "N/A") -> str:
     """Format datetime/date objects safely for display"""
     if isinstance(value, datetime):
@@ -347,11 +365,19 @@ def get_item(
     item_type: str = typer.Argument(..., help="Type of item to get (researcher, grant, organisation)"),
     item_id: str = typer.Argument(..., help="ID of the item to retrieve"),
     json_file: Optional[str] = typer.Option(None, "--json", help="Save result to JSON file"),
+    jsonl: bool = typer.Option(False, "--jsonl", help="Output JSON Lines to stdout"),
+    jsonl_file: Optional[str] = typer.Option(None, "--jsonl-file", help="Save results to JSON Lines file"),
     debug: bool = typer.Option(False, "--debug", help="Show full traceback on errors")
 ):
     """Get a specific item by type and ID"""
     global debug_mode
     debug_mode = debug
+    
+    options_provided = sum([json_file is not None, jsonl, jsonl_file is not None])
+    if options_provided > 1:
+        console.print("[red]Error: --json, --jsonl, and --jsonl-file are mutually exclusive[/red]")
+        raise typer.Exit(1)
+    
     try:
         client = get_client()
         
@@ -370,8 +396,13 @@ def get_item(
                 item = client.get_researcher_sync(item_id)
                 progress.update(task, completed=100)
                 
+                data = [asdict(item)]
                 if json_file:
-                    save_json_to_file([asdict(item)], json_file)
+                    save_json_to_file(data, json_file)
+                elif jsonl:
+                    output_jsonl_to_stdout(data)
+                elif jsonl_file:
+                    save_jsonl_to_file(data, jsonl_file)
                 else:
                     table = format_researcher_table([item], f"Researcher Details: {item.full_name}")
                     console.print(table)
@@ -381,8 +412,13 @@ def get_item(
                 item = client.get_grant_sync(item_id)
                 progress.update(task, completed=100)
                 
+                data = [asdict(item)]
                 if json_file:
-                    save_json_to_file([asdict(item)], json_file)
+                    save_json_to_file(data, json_file)
+                elif jsonl:
+                    output_jsonl_to_stdout(data)
+                elif jsonl_file:
+                    save_jsonl_to_file(data, jsonl_file)
                 else:
                     table = format_grant_table([item], f"Grant Details: {item.title}")
                     console.print(table)
@@ -392,8 +428,13 @@ def get_item(
                 item = client.get_organisation_sync(item_id)
                 progress.update(task, completed=100)
                 
+                data = [asdict(item)]
                 if json_file:
-                    save_json_to_file([asdict(item)], json_file)
+                    save_json_to_file(data, json_file)
+                elif jsonl:
+                    output_jsonl_to_stdout(data)
+                elif jsonl_file:
+                    save_jsonl_to_file(data, jsonl_file)
                 else:
                     table = format_organisation_table([item], f"Organisation Details: {item.name}")
                     console.print(table)
@@ -427,11 +468,19 @@ def search_researchers(
     topic: Optional[str] = typer.Option(None, "--topic", help="Search by research topic"),
     orcid_only: bool = typer.Option(False, "--orcid-only", help="Show only researchers with ORCID"),
     json_file: Optional[str] = typer.Option(None, "--json", help="Save results to JSON file"),
+    jsonl: bool = typer.Option(False, "--jsonl", help="Output JSON Lines to stdout"),
+    jsonl_file: Optional[str] = typer.Option(None, "--jsonl-file", help="Save results to JSON Lines file"),
     debug: bool = typer.Option(False, "--debug", help="Show full traceback on errors")
 ):
     """Search for researchers in the RLA database"""
     global debug_mode
     debug_mode = debug
+    
+    options_provided = sum([json_file is not None, jsonl, jsonl_file is not None])
+    if options_provided > 1:
+        console.print("[red]Error: --json, --jsonl, and --jsonl-file are mutually exclusive[/red]")
+        raise typer.Exit(1)
+    
     try:
         client = get_client()
         
@@ -523,10 +572,14 @@ def search_researchers(
         if orcid_only:
             researchers = filter_researchers_by_orcid(researchers)
         
+        data = [asdict(r) for r in researchers]
+        
         if json_file:
-            # Save to JSON file
-            data = [asdict(r) for r in researchers]
             save_json_to_file(data, json_file)
+        elif jsonl:
+            output_jsonl_to_stdout(data)
+        elif jsonl_file:
+            save_jsonl_to_file(data, jsonl_file)
         else:
             # Display table format to stdout
             if all_results:
@@ -580,12 +633,20 @@ def search_grants(
     topic: Optional[str] = typer.Option(None, "--topic", help="Search by research topic"),
     min_amount: Optional[float] = typer.Option(None, "--min-amount", help="Minimum funding amount"),
     json_file: Optional[str] = typer.Option(None, "--json", help="Save results to JSON file"),
+    jsonl: bool = typer.Option(False, "--jsonl", help="Output JSON Lines to stdout"),
+    jsonl_file: Optional[str] = typer.Option(None, "--jsonl-file", help="Save results to JSON Lines file"),
     show_stats: bool = typer.Option(False, "--stats", help="Show funding statistics"),
     debug: bool = typer.Option(False, "--debug", help="Show full traceback on errors")
 ):
     """Search for grants in the RLA database"""
     global debug_mode
     debug_mode = debug
+    
+    options_provided = sum([json_file is not None, jsonl, jsonl_file is not None])
+    if options_provided > 1:
+        console.print("[red]Error: --json, --jsonl, and --jsonl-file are mutually exclusive[/red]")
+        raise typer.Exit(1)
+    
     try:
         client = get_client()
         
@@ -741,10 +802,14 @@ def search_grants(
             )
             console.print(stats_panel)
         
+        data = [asdict(g) for g in grants]
+        
         if json_file:
-            # Save to JSON file
-            data = [asdict(g) for g in grants]
             save_json_to_file(data, json_file)
+        elif jsonl:
+            output_jsonl_to_stdout(data)
+        elif jsonl_file:
+            save_jsonl_to_file(data, jsonl_file)
         else:
             # Display table format to stdout
             if all_results:
@@ -856,11 +921,19 @@ def search_organisations(
     topic: Optional[str] = typer.Option(None, "--topic", help="Filter by research topic/field"),
     status: Optional[str] = typer.Option(None, "--status", help="Filter by status"),
     json_file: Optional[str] = typer.Option(None, "--json", help="Save results to JSON file"),
+    jsonl: bool = typer.Option(False, "--jsonl", help="Output JSON Lines to stdout"),
+    jsonl_file: Optional[str] = typer.Option(None, "--jsonl-file", help="Save results to JSON Lines file"),
     debug: bool = typer.Option(False, "--debug", help="Show full traceback on errors")
 ):
     """Search for organisations in the RLA database"""
     global debug_mode
     debug_mode = debug
+    
+    options_provided = sum([json_file is not None, jsonl, jsonl_file is not None])
+    if options_provided > 1:
+        console.print("[red]Error: --json, --jsonl, and --jsonl-file are mutually exclusive[/red]")
+        raise typer.Exit(1)
+    
     try:
         client = get_client()
         
@@ -973,8 +1046,14 @@ def search_organisations(
             
             orgs = response.results
         
+        data = [asdict(org) for org in orgs]
+        
         if json_file:
-            save_json_to_file([asdict(org) for org in orgs], json_file)
+            save_json_to_file(data, json_file)
+        elif jsonl:
+            output_jsonl_to_stdout(data)
+        elif jsonl_file:
+            save_jsonl_to_file(data, jsonl_file)
         else:
             # Table format (default)
             if all_results:

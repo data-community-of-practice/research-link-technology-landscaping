@@ -19,6 +19,10 @@ class APIConfig:
     
     # Concurrency limits
     DEFAULT_MAX_CONCURRENT = 5
+
+    # Rate-limit retry settings
+    RATE_LIMIT_RETRY_ATTEMPTS = 5
+    DEFAULT_RETRY_AFTER = 30
     
     # Base URL
     BASE_URL = "https://researchlink.ardc.edu.au"

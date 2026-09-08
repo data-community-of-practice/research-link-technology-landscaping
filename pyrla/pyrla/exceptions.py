@@ -26,3 +26,11 @@ class RLAValidationError(RLAError):
 class RLAServerError(RLAError):
     """Raised when server returns 5xx error"""
     pass
+
+
+class RLARateLimitError(RLAError):
+    """Raised when rate-limited (HTTP 429)"""
+    def __init__(self, message: str, retry_after: int = 30, response_data: dict | None = None):
+        self.retry_after = retry_after
+        self.response_data = response_data or {}
+        super().__init__(message)

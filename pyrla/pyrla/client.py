@@ -5,6 +5,7 @@ Main client for interacting with the Research Link Australia (RLA) API
 import os
 import httpx
 import asyncio
+import tenacity
 from typing import Dict, List, Optional, Union, Any
 from urllib.parse import urljoin
 import logging
@@ -14,6 +15,7 @@ from .exceptions import (
     RLAError, 
     RLAAuthenticationError, 
     RLANotFoundError, 
+    RLARateLimitError,
     RLAValidationError,
     RLAServerError
 )
@@ -96,6 +98,12 @@ class RLAClient:
         # Async session management
         self._session: Optional[httpx.AsyncClient] = None
     
+    @tenacity.retry(
+        retry=tenacity.retry_if_exception_type(RLARateLimitError),
+        wait=lambda rs: rs.outcome.exception().retry_after * (2 ** (rs.attempt_number - 1)),
+        stop=tenacity.stop_after_attempt(APIConfig.RATE_LIMIT_RETRY_ATTEMPTS),
+        reraise=True,
+    )
     def _make_request(self, endpoint: str, params: Optional[Dict] = None) -> Dict[str, Any]:
         """
         Make HTTP request to API endpoint
@@ -111,6 +119,7 @@ class RLAClient:
             RLAAuthenticationError: If authentication fails
             RLANotFoundError: If resource not found
             RLAValidationError: If request validation fails
+            RLARateLimitError: If rate limited (HTTP 429)
             RLAServerError: If server error occurs
             RLAError: For other API errors
         """
@@ -145,6 +154,14 @@ class RLAClient:
                 raise RLANotFoundError("Resource not found")
             elif response.status_code == 400:
                 raise RLAValidationError(f"Invalid request parameters: {response.text}")
+            elif response.status_code == 429:
+                body = response.json()
+                retry_after = body.get("retry_after", APIConfig.DEFAULT_RETRY_AFTER)
+                raise RLARateLimitError(
+                    f"Rate limited (HTTP 429): {response.text}",
+                    retry_after=retry_after,
+                    response_data=body,
+                )
             elif 500 <= response.status_code < 600:
                 raise RLAServerError(f"Server error ({response.status_code}): {response.text}")
             else:
@@ -226,6 +243,12 @@ class RLAClient:
                 # If no event loop exists, create one for cleanup
                 asyncio.run(self._close_session())
     
+    @tenacity.retry(
+        retry=tenacity.retry_if_exception_type(RLARateLimitError),
+        wait=lambda rs: rs.outcome.exception().retry_after * (2 ** (rs.attempt_number - 1)),
+        stop=tenacity.stop_after_attempt(APIConfig.RATE_LIMIT_RETRY_ATTEMPTS),
+        reraise=True,
+    )
     async def _make_async_request(self, endpoint: str, params: Optional[Dict] = None) -> Dict[str, Any]:
         """
         Make async HTTP request to API endpoint
@@ -240,6 +263,7 @@ class RLAClient:
         Raises:
             RLAAuthenticationError: If authentication fails
             RLANotFoundError: If resource not found
+            RLARateLimitError: If rate limited (HTTP 429)
             RLAValidationError: If request validation fails
             RLAServerError: If server error occurs
             RLAError: For other API errors
@@ -275,6 +299,14 @@ class RLAClient:
                 raise RLANotFoundError("Resource not found")
             elif response.status_code == 400:
                 raise RLAValidationError(f"Invalid request parameters: {response.text}")
+            elif response.status_code == 429:
+                body = response.json()
+                retry_after = body.get("retry_after", APIConfig.DEFAULT_RETRY_AFTER)
+                raise RLARateLimitError(
+                    f"Rate limited (HTTP 429): {response.text}",
+                    retry_after=retry_after,
+                    response_data=body,
+                )
             elif 500 <= response.status_code < 600:
                 raise RLAServerError(f"Server error ({response.status_code}): {response.text}")
             else:
@@ -284,7 +316,7 @@ class RLAClient:
             raise RLAError(f"Request failed: {e}")
         except Exception as e:
             # Ensure session cleanup on unexpected errors
-            if isinstance(e, (RLAError, RLAAuthenticationError, RLANotFoundError, RLAValidationError, RLAServerError)):
+            if isinstance(e, (RLAError, RLAAuthenticationError, RLANotFoundError, RLARateLimitError, RLAValidationError, RLAServerError)):
                 # Re-raise our custom exceptions
                 raise
             else:
